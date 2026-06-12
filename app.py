@@ -2,7 +2,11 @@ import streamlit as st
 import numpy as np
 import requests
 import pandas as pd
+import urllib3
 from datetime import datetime, timedelta
+
+# 🛑 強制關閉因為跳過 SSL 檢查而產生的安全警告紅字，保持網頁乾淨
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
 # 1. 內嵌使用者實體 CWA API 授權碼與全域初始化
@@ -19,7 +23,7 @@ if 'target_vwc' not in st.session_state: st.session_state.target_vwc = 0.24
 # 網頁基本配置
 st.set_page_config(page_title="72AI40 智慧灌溉決策系統", layout="wide")
 st.title("🌱 💻 桃改樹林分場實時智慧灌溉系統 (72AI40)")
-st.markdown("連動中央氣象署 API 授權金鑰偵錯版。")
+st.markdown("連動中央氣象署 API 授權金鑰憑證修正版。")
 st.markdown("---")
 
 # ==========================================
@@ -70,7 +74,7 @@ def calculate_et0(t_max, t_min, t_dew, u_z, r_s, z, latitude, day_of_year, z_win
     return max(0.0, num / den)
 
 # ==========================================
-# 3. 實體中央氣象署 API 資料對接與錯誤回報模組
+# 3. 實體中央氣象署 API 資料對接 (加入 verify=False)
 # ==========================================
 
 def fetch_real_cwa_data():
@@ -80,7 +84,8 @@ def fetch_real_cwa_data():
     # --- 端點 1：今日即時天氣觀測 ---
     try:
         url_now = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization={CWA_API_KEY}&StationId=72AI40"
-        res_now = requests.get(url_now, timeout=8).json()
+        # 💡 加入 verify=False 跳過氣象署憑證缺失問題
+        res_now = requests.get(url_now, timeout=8, verify=False).json()
         if 'records' in res_now and res_now['records']['Station']:
             s_data = res_now['records']['Station'][0]['WeatherElement']
             t_max = float(s_data['DailyExtreme']['DailyMaximum']['AirTemperature']['Temperature'])
@@ -107,9 +112,9 @@ def fetch_real_cwa_data():
     # --- 端點 2：過去歷史日觀測資料 ---
     try:
         url_hist = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={CWA_API_KEY}&StationId=72AI40"
-        res_hist = requests.get(url_hist, timeout=8).json()
+        # 💡 加入 verify=False 跳過氣象署憑證缺失問題
+        res_hist = requests.get(url_hist, timeout=8, verify=False).json()
         if 'records' in res_hist and res_hist['records']['Station']:
-            # 偵測實際回傳的歷史字典結構
             station_node = res_hist['records']['Station'][0]
             if 'WeatherElement' in station_node and 'DailyStat' in station_node['WeatherElement']:
                 hist_records = station_node['WeatherElement']['DailyStat']
@@ -132,7 +137,8 @@ def fetch_real_cwa_data():
     # --- 端點 3：未來 1 週天氣預報 ---
     try:
         url_fore = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-069?Authorization={CWA_API_KEY}"
-        res_fore = requests.get(url_fore, timeout=8).json()
+        # 💡 加入 verify=False 跳過氣象署憑證缺失問題
+        res_fore = requests.get(url_fore, timeout=8, verify=False).json()
         if 'records' in res_fore:
             locations = res_fore['records']['Locations'][0]['Location']
             shulin_fore = [loc for loc in locations if loc['LocationName'] == "樹林區"][0]['WeatherElement']
@@ -219,7 +225,6 @@ with tab2:
     if cwa_past:
         df_past = pd.DataFrame(cwa_past)
     else:
-        # 這裡優化了安全退回機制的數字，讓它呈現動態起伏，不至於完全一樣
         past_dates = [(today - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(1, 8)]; past_dates.reverse()
         df_past = pd.DataFrame({
             "觀測日期": past_dates, 
