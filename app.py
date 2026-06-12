@@ -9,10 +9,11 @@ from datetime import datetime, timedelta
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
-# 1. 全域變數初始化 (防止分頁切換時資料遺失)
+# 1. 綁定實體 CWA API 授權碼與全域資料庫初始化
 # ==========================================
 CWA_API_KEY = "CWA-8794BCB2-04B5-4953-8EE1-CB3059C339D0"
 
+# 初始化全域變數，防禦分頁切換遺失
 if 'z' not in st.session_state: st.session_state.z = 40.0
 if 'latitude' not in st.session_state: st.session_state.latitude = 24.9445
 if 'root_depth' not in st.session_state: st.session_state.root_depth = 300
@@ -21,7 +22,7 @@ if 'kc' not in st.session_state: st.session_state.kc = 0.75
 if 'target_vwc' not in st.session_state: st.session_state.target_vwc = 0.24
 
 if 'weather_db' not in st.session_state:
-    # 預載入 2026年 6/1 ~ 6/12 您的現地精密流水帳作為基礎核心記憶體
+    # 預載入您的現地精密流水帳作為基礎核心記憶體
     st.session_state.weather_db = {
         "2026-06-01": {"sl_pres": 1009.0, "sl_tx": 31.0, "sl_tn": 23.5, "sl_ws": 0.9, "sl_precp": 0.0, "sl_rs": 22.0, "sl_td": 21.0, "bq_pres": 1009.5, "bq_tx": 31.2, "bq_tn": 23.8, "bq_ws": 1.1, "bq_precp": 0.0, "bq_rs": 21.5, "bq_td": 21.2},
         "2026-06-02": {"sl_pres": 1008.5, "sl_tx": 31.5, "sl_tn": 24.0, "sl_ws": 1.1, "sl_precp": 0.0, "sl_rs": 23.0, "sl_td": 21.5, "bq_pres": 1008.9, "bq_tx": 31.8, "bq_tn": 24.1, "bq_ws": 1.3, "bq_precp": 0.0, "bq_rs": 22.0, "bq_td": 21.6},
@@ -36,11 +37,6 @@ if 'weather_db' not in st.session_state:
         "2026-06-11": {"sl_pres": 1007.8, "sl_tx": 31.0, "sl_tn": 24.0, "sl_ws": 2.1, "sl_precp": 6.0, "sl_rs": 22.1, "sl_td": 22.0, "bq_pres": 1008.0, "bq_tx": 31.2, "bq_tn": 24.2, "bq_ws": 2.3, "bq_precp": 7.2, "bq_rs": 21.4, "bq_td": 22.1},
         "2026-06-12": {"sl_pres": 1008.0, "sl_tx": 31.5, "sl_tn": 24.5, "sl_ws": 2.4, "sl_precp": 0.0, "sl_rs": 20.0, "sl_td": 21.8, "bq_pres": 1008.2, "bq_tx": 31.7, "bq_tn": 24.6, "bq_ws": 2.5, "bq_precp": 0.0, "bq_rs": 19.5, "bq_td": 21.9}
     }
-
-# 網頁配置
-st.set_page_config(page_title="72AI40 智慧灌溉決策系統", layout="wide")
-st.title("🌱 💻 桃改樹林分場全自動智慧灌溉系統 (72AI40連動466881大站)")
-st.markdown("---")
 
 # ==========================================
 # 2. 核心科學公式定義
@@ -90,12 +86,12 @@ def calculate_et0(t_max, t_min, t_dew, u_z, r_s, z, latitude, day_of_year, z_win
     return max(0.0, num / den)
 
 # ==========================================
-# 3. 實體智慧數據對接調度核心 (已排除快取內部的 State 污染)
+# 3. 實體智慧數據對接調度核心 (純函數快取)
 # ==========================================
 
 @st.cache_data(ttl=600)
 def fetch_completely_automated_data():
-    """唯讀快取函數：只抓資料並回傳字典，不碰觸 st.session_state"""
+    """唯讀快取：只抓取不污染狀態"""
     today_data, api_past_dict, future_list = None, {}, []
     
     # A. 抓取樹林無人站 (72AI40) 當日即時
@@ -114,7 +110,7 @@ def fetch_completely_automated_data():
     except:
         pass
 
-    # B. 抓取板橋大站 (466881) 過去 7 天
+    # B. 自動對接板橋大站 (466881) 過去 7 天
     try:
         url_hist = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={CWA_API_KEY}&StationId=466881"
         res_hist = requests.get(url_hist, timeout=8, verify=False).json()
@@ -134,7 +130,7 @@ def fetch_completely_automated_data():
     except:
         pass
 
-    # C. 抓取新北市樹林區未來 7 天預報
+    # C. 未來 7 天預報 (F-D0047-069)
     try:
         url_fore = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-069?Authorization={CWA_API_KEY}"
         res_fore = requests.get(url_fore, timeout=8, verify=False).json()
@@ -172,17 +168,17 @@ def fetch_completely_automated_data():
 
     return today_data, api_past_dict, future_list
 
-# 呼叫唯讀快取
+# 執行自動對接
 cwa_now, cwa_past_api, cwa_future = fetch_completely_automated_data()
 
-# 主程序中安全更新全域記憶體資料庫
+# 主程式中安全更新記憶體資料庫
 if cwa_past_api:
     for d_str, bq_node in cwa_past_api.items():
         if d_str not in st.session_state.weather_db:
             st.session_state.weather_db[d_str] = {"sl_pres": 1008.0, "sl_tx": 31.0, "sl_tn": 24.0, "sl_ws": 1.2, "sl_precp": 0.0, "sl_rs": 20.0, "sl_td": 22.0}
         st.session_state.weather_db[d_str].update(bq_node)
 
-# 安全讀取本機環境配置變數 (避免 Proxy 異常所引起的 AttributeError)
+# 💡 安全防禦機制：全面改用 .get() 讀取狀態，徹底杜絕 AttributeError
 z_val = st.session_state.get('z', 40.0)
 lat_val = st.session_state.get('latitude', 24.9445)
 root_depth_val = st.session_state.get('root_depth', 300)
@@ -191,11 +187,10 @@ kc_val = st.session_state.get('kc', 0.75)
 target_vwc_val = st.session_state.get('target_vwc', 0.24)
 
 # ==========================================
-# 4. 建立網頁全新四大分頁
+# 4. 網頁四大分頁配置
 # ==========================================
 tab1, tab2, tab3, tab4 = st.tabs(["📊 土壤含水與灌溉決策", "📅 歷史氣象與 ET0 對照", "🔮 未來一週天氣預報", "⚙️ 幕後設定參數"])
 
-# 💡 取得時間天數指針
 today_dt = datetime.now()
 current_doy = today_dt.timetuple().tm_yday
 
@@ -217,6 +212,7 @@ with tab1:
     u_z = cwa_now["u_z"] if cwa_now else 1.5
 
     current_vwc = calculate_vwc(h_input)
+    # 💡 這裡已全面修復，改用安全防禦變數 z_val 與 lat_val 計算
     et0 = calculate_et0(t_max, t_min, t_dew, u_z, r_s_input, z_val, lat_val, current_doy)
     etc = et0 * kc_val
     
@@ -238,7 +234,7 @@ with tab1:
         st.warning(f"🟢 **【系統狀態：狀態良好】** 目前水分張力為 {h_input} kPa (維持在適宜區間 15 ~ 25 kPa)。")
 
 # ------------------------------------------
-# 分頁二：歷史氣象與 ET0 對照 (雙站記憶 + 日期回溯器)
+# 分頁二：歷史氣象與 ET0 對照
 # ------------------------------------------
 with tab2:
     st.header("📅 雙站氣象歷史記憶資料庫")
@@ -371,8 +367,8 @@ with tab4:
     
     col_p1, col_p2 = st.columns(2)
     with col_p1:
-        st.number_input("📍 樹林分場海拔高度 (m)", value=40.0, disabled=True)
-        st.number_input("📐 樹林分場北緯緯度 (度)", value=24.9445, format="%.4f", disabled=True)
+        st.number_input("📍 樹林分場海拔高度 (m)", value=z_val, disabled=True)
+        st.number_input("📐 樹林分場北緯緯度 (度)", value=lat_val, format="%.4f", disabled=True)
     with col_p2:
         st.number_input("🏢 板橋主站(466881)海拔高度 (m)", value=24.5, disabled=True)
         st.number_input("📐 板橋主站(466881)北緯緯度 (度)", value=24.9592, format="%.4f", disabled=True)
@@ -381,8 +377,8 @@ with tab4:
     st.markdown("### 🌾 田區操作基本設定")
     t4_col1, t4_col2 = st.columns(2)
     with t4_col1:
-        st.session_state.root_depth = st.number_input("📏 有效根系深度 D (mm)", value=st.session_state.root_depth, step=50)
-        st.session_state.field_area = st.number_input("📐 實際灌溉面積 (㎡)", value=st.session_state.field_area, step=10.0)
+        st.session_state.root_depth = st.number_input("📏 有效根系深度 D (mm)", value=root_depth_val, step=50)
+        st.session_state.field_area = st.number_input("📐 實際灌溉面積 (㎡)", value=field_area_val, step=10.0)
     with t4_col2:
-        st.session_state.kc = st.number_input("🌿 作物係數 (Kc)", value=st.session_state.kc, step=0.05)
-        st.session_state.target_vwc = st.number_input("🎯 目標含水量 (田間容水量) (m3/m3)", value=st.session_state.target_vwc, step=0.01)
+        st.session_state.kc = st.number_input("🌿 作物係數 (Kc)", value=kc_val, step=0.05)
+        st.session_state.target_vwc = st.number_input("🎯 目標含水量 (田間容水量) (m3/m3)", value=target_vwc_val, step=0.01)
