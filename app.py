@@ -5,17 +5,23 @@ import pandas as pd
 import urllib3
 from datetime import datetime, timedelta
 
-# 強制關閉跳過 SSL 檢查而產生的安全警告
+# 強制關閉因為跳過 SSL 檢查而產生的安全警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
-# 1. 綁定實體 CWA API 授權碼與全域資料庫初始化
+# 1. 全域變數初始化 (防止分頁切換時資料遺失)
 # ==========================================
 CWA_API_KEY = "CWA-8794BCB2-04B5-4953-8EE1-CB3059C339D0"
 
-# 智慧記憶體：若資料庫不存在則初始化，防止切換分頁時遺失數據
+if 'z' not in st.session_state: st.session_state.z = 40.0
+if 'latitude' not in st.session_state: st.session_state.latitude = 24.9445
+if 'root_depth' not in st.session_state: st.session_state.root_depth = 300
+if 'field_area' not in st.session_state: st.session_state.field_area = 100.0
+if 'kc' not in st.session_state: st.session_state.kc = 0.75
+if 'target_vwc' not in st.session_state: st.session_state.target_vwc = 0.24
+
 if 'weather_db' not in st.session_state:
-    # 預載入 2026-06-01 至 06-12 您的現地精密流水帳作為基礎資料庫
+    # 預載入 2026年 6/1 ~ 6/12 您的現地精密流水帳作為基礎核心記憶體
     st.session_state.weather_db = {
         "2026-06-01": {"sl_pres": 1009.0, "sl_tx": 31.0, "sl_tn": 23.5, "sl_ws": 0.9, "sl_precp": 0.0, "sl_rs": 22.0, "sl_td": 21.0, "bq_pres": 1009.5, "bq_tx": 31.2, "bq_tn": 23.8, "bq_ws": 1.1, "bq_precp": 0.0, "bq_rs": 21.5, "bq_td": 21.2},
         "2026-06-02": {"sl_pres": 1008.5, "sl_tx": 31.5, "sl_tn": 24.0, "sl_ws": 1.1, "sl_precp": 0.0, "sl_rs": 23.0, "sl_td": 21.5, "bq_pres": 1008.9, "bq_tx": 31.8, "bq_tn": 24.1, "bq_ws": 1.3, "bq_precp": 0.0, "bq_rs": 22.0, "bq_td": 21.6},
@@ -25,16 +31,16 @@ if 'weather_db' not in st.session_state:
         "2026-06-06": {"sl_pres": 1007.9, "sl_tx": 32.1, "sl_tn": 24.2, "sl_ws": 0.9, "sl_precp": 0.0, "sl_rs": 23.4, "sl_td": 22.1, "bq_pres": 1008.1, "bq_tx": 32.3, "bq_tn": 24.4, "bq_ws": 1.0, "bq_precp": 0.0, "bq_rs": 22.8, "bq_td": 22.3},
         "2026-06-07": {"sl_pres": 1009.1, "sl_tx": 31.4, "sl_tn": 25.0, "sl_ws": 0.7, "sl_precp": 99.0, "sl_rs": 19.5, "sl_td": 23.0, "bq_pres": 1009.3, "bq_tx": 31.6, "bq_tn": 25.1, "bq_ws": 0.9, "bq_precp": 105.0, "bq_rs": 18.2, "bq_td": 23.2},
         "2026-06-08": {"sl_pres": 1008.5, "sl_tx": 29.8, "sl_tn": 23.8, "sl_ws": 0.6, "sl_precp": 18.0, "sl_rs": 17.1, "sl_td": 22.4, "bq_pres": 1008.7, "bq_tx": 29.9, "bq_tn": 24.0, "bq_ws": 0.7, "bq_precp": 20.0, "bq_rs": 16.5, "bq_td": 22.5},
-        "2026-06-09": {"pres": 1005.1, "tmax": 33.2, "tmin": 22.9, "ws": 1.5, "precp": 23.5, "rad": 12.0, "tdew": 21.8, "sl_pres": 1005.1, "sl_tx": 33.2, "sl_tn": 22.9, "sl_ws": 1.5, "sl_precp": 23.5, "sl_rs": 12.0, "sl_td": 21.8, "bq_pres": 1005.4, "bq_tx": 33.4, "bq_tn": 23.0, "bq_ws": 1.7, "bq_precp": 25.0, "bq_rs": 11.2, "bq_td": 21.9},
+        "2026-06-09": {"sl_pres": 1005.1, "sl_tx": 33.2, "sl_tn": 22.9, "sl_ws": 1.5, "sl_precp": 23.5, "sl_rs": 12.0, "sl_td": 21.8, "bq_pres": 1005.4, "bq_tx": 33.4, "bq_tn": 23.0, "bq_ws": 1.7, "bq_precp": 25.0, "bq_rs": 11.2, "bq_td": 21.9},
         "2026-06-10": {"sl_pres": 1006.4, "sl_tx": 26.5, "sl_tn": 21.8, "sl_ws": 1.5, "sl_precp": 22.0, "sl_rs": 5.4, "sl_td": 20.9, "bq_pres": 1006.7, "bq_tx": 26.8, "bq_tn": 22.0, "bq_ws": 1.6, "bq_precp": 24.0, "bq_rs": 5.0, "bq_td": 21.0},
         "2026-06-11": {"sl_pres": 1007.8, "sl_tx": 31.0, "sl_tn": 24.0, "sl_ws": 2.1, "sl_precp": 6.0, "sl_rs": 22.1, "sl_td": 22.0, "bq_pres": 1008.0, "bq_tx": 31.2, "bq_tn": 24.2, "bq_ws": 2.3, "bq_precp": 7.2, "bq_rs": 21.4, "bq_td": 22.1},
         "2026-06-12": {"sl_pres": 1008.0, "sl_tx": 31.5, "sl_tn": 24.5, "sl_ws": 2.4, "sl_precp": 0.0, "sl_rs": 20.0, "sl_td": 21.8, "bq_pres": 1008.2, "bq_tx": 31.7, "bq_tn": 24.6, "bq_ws": 2.5, "bq_precp": 0.0, "bq_rs": 19.5, "bq_td": 21.9}
     }
 
-if 'root_depth' not in st.session_state: st.session_state.root_depth = 300
-if 'field_area' not in st.session_state: st.session_state.field_area = 100.0
-if 'kc' not in st.session_state: st.session_state.kc = 0.75
-if 'target_vwc' not in st.session_state: st.session_state.target_vwc = 0.24
+# 網頁配置
+st.set_page_config(page_title="72AI40 智慧灌溉決策系統", layout="wide")
+st.title("🌱 💻 桃改樹林分場全自動智慧灌溉系統 (72AI40連動466881大站)")
+st.markdown("---")
 
 # ==========================================
 # 2. 核心科學公式定義
@@ -84,15 +90,15 @@ def calculate_et0(t_max, t_min, t_dew, u_z, r_s, z, latitude, day_of_year, z_win
     return max(0.0, num / den)
 
 # ==========================================
-# 3. 氣象署 API 自動串接調度器
+# 3. 實體智慧數據對接調度核心 (已排除快取內部的 State 污染)
 # ==========================================
 
 @st.cache_data(ttl=600)
-def fetch_automated_cwa_data():
-    """自動串接 72AI40 今日即時與板橋(466881)歷史、樹林預報"""
-    today_data, future_list = None, []
+def fetch_completely_automated_data():
+    """唯讀快取函數：只抓資料並回傳字典，不碰觸 st.session_state"""
+    today_data, api_past_dict, future_list = None, {}, []
     
-    # A. 抓取樹林無人站 (72AI40) 的今日實時數據
+    # A. 抓取樹林無人站 (72AI40) 當日即時
     try:
         url_now = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization={CWA_API_KEY}&StationId=72AI40"
         res_now = requests.get(url_now, timeout=8, verify=False).json()
@@ -108,7 +114,7 @@ def fetch_automated_cwa_data():
     except:
         pass
 
-    # B. 自動抓取板橋大站 (466881) 過去 7 天真實觀測並寫入記憶體
+    # B. 抓取板橋大站 (466881) 過去 7 天
     try:
         url_hist = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={CWA_API_KEY}&StationId=466881"
         res_hist = requests.get(url_hist, timeout=8, verify=False).json()
@@ -116,11 +122,7 @@ def fetch_automated_cwa_data():
             hist_records = res_hist['records']['Station'][0]['WeatherElement']['DailyStat']
             for day in hist_records:
                 d_str = day['Date']
-                # 將板橋大站數據合併更新至全域記憶體中
-                if d_str not in st.session_state.weather_db:
-                    st.session_state.weather_db[d_str] = {"sl_pres": 1008.0, "sl_tx": 31.0, "sl_tn": 24.0, "sl_ws": 1.2, "sl_precp": 0.0, "sl_rs": 20.0, "sl_td": 22.0}
-                
-                st.session_state.weather_db[d_str].update({
+                api_past_dict[d_str] = {
                     "bq_pres": float(day['AirPressure']['Mean']),
                     "bq_tx": float(day['AirTemperature']['Maximum']),
                     "bq_tn": float(day['AirTemperature']['Minimum']),
@@ -128,11 +130,11 @@ def fetch_automated_cwa_data():
                     "bq_precp": float(day['Precipitation']['Accumulation']),
                     "bq_rs": float(day['GlobalSolarRadiation']['Accumulation']) if float(day['GlobalSolarRadiation']['Accumulation']) > 0 else 18.5,
                     "bq_td": round(float(day['AirTemperature']['Mean']) - ((100 - float(day['RelativeHumidity']['Mean'])) / 5), 1)
-                })
+                }
     except:
         pass
 
-    # C. 未來 7 天預報：完全對齊小寫 json 語法 (F-D0047-069)
+    # C. 抓取新北市樹林區未來 7 天預報
     try:
         url_fore = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-069?Authorization={CWA_API_KEY}"
         res_fore = requests.get(url_fore, timeout=8, verify=False).json()
@@ -168,15 +170,32 @@ def fetch_automated_cwa_data():
     except:
         pass
 
-    return today_data, future_list
+    return today_data, api_past_dict, future_list
 
-cwa_now, cwa_future = fetch_automated_cwa_data()
+# 呼叫唯讀快取
+cwa_now, cwa_past_api, cwa_future = fetch_completely_automated_data()
+
+# 主程序中安全更新全域記憶體資料庫
+if cwa_past_api:
+    for d_str, bq_node in cwa_past_api.items():
+        if d_str not in st.session_state.weather_db:
+            st.session_state.weather_db[d_str] = {"sl_pres": 1008.0, "sl_tx": 31.0, "sl_tn": 24.0, "sl_ws": 1.2, "sl_precp": 0.0, "sl_rs": 20.0, "sl_td": 22.0}
+        st.session_state.weather_db[d_str].update(bq_node)
+
+# 安全讀取本機環境配置變數 (避免 Proxy 異常所引起的 AttributeError)
+z_val = st.session_state.get('z', 40.0)
+lat_val = st.session_state.get('latitude', 24.9445)
+root_depth_val = st.session_state.get('root_depth', 300)
+field_area_val = st.session_state.get('field_area', 100.0)
+kc_val = st.session_state.get('kc', 0.75)
+target_vwc_val = st.session_state.get('target_vwc', 0.24)
 
 # ==========================================
-# 4. 網頁全新四大分頁佈局
+# 4. 建立網頁全新四大分頁
 # ==========================================
 tab1, tab2, tab3, tab4 = st.tabs(["📊 土壤含水與灌溉決策", "📅 歷史氣象與 ET0 對照", "🔮 未來一週天氣預報", "⚙️ 幕後設定參數"])
 
+# 💡 取得時間天數指針
 today_dt = datetime.now()
 current_doy = today_dt.timetuple().tm_yday
 
@@ -198,11 +217,11 @@ with tab1:
     u_z = cwa_now["u_z"] if cwa_now else 1.5
 
     current_vwc = calculate_vwc(h_input)
-    et0 = calculate_et0(t_max, t_min, t_dew, u_z, r_s_input, st.session_state.z if 'z' in st.session_state else 40.0, st.session_state.latitude, current_doy)
-    etc = et0 * st.session_state.kc
+    et0 = calculate_et0(t_max, t_min, t_dew, u_z, r_s_input, z_val, lat_val, current_doy)
+    etc = et0 * kc_val
     
-    soil_water_deficit_mm = max(0.0, (st.session_state.target_vwc - current_vwc) * st.session_state.root_depth)
-    total_water_volume_liters = (soil_water_deficit_mm + etc) * st.session_state.field_area
+    soil_water_deficit_mm = max(0.0, (target_vwc_val - current_vwc) * root_depth_val)
+    total_water_volume_liters = (soil_water_deficit_mm + etc) * field_area_val
 
     st.markdown("---")
     res_col1, res_col2, res_col3 = st.columns(3)
@@ -224,7 +243,6 @@ with tab1:
 with tab2:
     st.header("📅 雙站氣象歷史記憶資料庫")
     
-    # A. 樹林手動上傳區
     st.markdown("### 📂 樹林分場 - 手動流水帳上傳同步")
     uploaded_file = st.file_uploader("拖曳上傳樹林分場 Excel 紀錄檔，系統會將其合併寫入永久記憶體", type=["xlsx", "csv"])
     if uploaded_file is not None:
@@ -250,7 +268,6 @@ with tab2:
 
     st.markdown("---")
     
-    # B. 呈現近七天雙站對照表
     st.subheader("📋 近 7 日雙站觀測與各自 ET0 預估報表")
     sorted_dates = sorted(list(st.session_state.weather_db.keys()))[-7:]
     
@@ -260,7 +277,6 @@ with tab2:
         d_dt = datetime.strptime(d, "%Y-%m-%d")
         doy = d_dt.timetuple().tm_yday
         
-        # 各自帶入公式算當天 ET0
         sl_et0 = calculate_et0(node.get("sl_tx",31.0), node.get("sl_tn",24.0), node.get("sl_td",22.0), node.get("sl_ws",1.0), node.get("sl_rs",20.0), 40.0, 24.9445, doy)
         bq_et0 = calculate_et0(node.get("bq_tx",31.0), node.get("bq_tn",24.0), node.get("bq_td",22.0), node.get("bq_ws",1.0), node.get("bq_rs",20.0), 24.5, 24.9592, doy)
         
@@ -277,7 +293,6 @@ with tab2:
 
     st.markdown("---")
     
-    # 🌟 核心：任意日期回溯查詢器
     st.subheader("🔍 歷史日期任意觀測回溯 lookup")
     search_date = st.date_input("📅 請選擇欲回溯查詢的歷史日期", value=datetime.strptime(sorted_dates[-1], "%Y-%m-%d"))
     search_str = search_date.strftime("%Y-%m-%d")
@@ -293,19 +308,19 @@ with tab2:
         with lookup_col1:
             st.info(f"""
             **🏡 樹林分場 (手動站)**
-            *   測站氣壓: `{s_node.get('sl_pres')} hPa`
-            *   最高 / 最低溫: `{s_node.get('sl_tx')}°C / {s_node.get('sl_tn')}°C`
-            *   實測風速 / 降雨: `{s_node.get('sl_ws')} m/s / {s_node.get('sl_precp')} mm`
-            *   全天空日射量: `{s_node.get('sl_rs')} MJ/㎡`
+            *   測站氣壓: `{s_node.get('sl_pres', 1008.0)} hPa`
+            *   最高 / 最低溫: `{s_node.get('sl_tx', 31.0)}°C / {s_node.get('sl_tn', 24.0)}°C`
+            *   實測風速 / 降雨: `{s_node.get('sl_ws', 1.0)} m/s / {s_node.get('sl_precp', 0.0)} mm`
+            *   全天空日射量: `{s_node.get('sl_rs', 20.0)} MJ/㎡`
             *   👉 **當日推估基準 ET0: {s_sl_et0:.2f} mm/day**
             """)
         with lookup_col2:
             st.warning(f"""
             **🏢 板橋大站 (站號: 466881)**
-            *   測站氣壓: `{s_node.get('bq_pres')} hPa`
-            *   最高 / 最低溫: `{s_node.get('bq_tx')}°C / {s_node.get('bq_tn')}°C`
-            *   實測風速 / 降雨: `{s_node.get('bq_ws')} m/s / {s_node.get('bq_precp')} mm`
-            *   全天空日射量: `{s_node.get('bq_rs')} MJ/㎡`
+            *   測站氣壓: `{s_node.get('bq_pres', 1008.0)} hPa`
+            *   最高 / 最低溫: `{s_node.get('bq_tx', 31.0)}°C / {s_node.get('bq_tn', 24.0)}°C`
+            *   實測風速 / 降雨: `{s_node.get('bq_ws', 1.0)} m/s / {s_node.get('bq_precp', 0.0)} mm`
+            *   全天空日射量: `{s_node.get('bq_rs', 20.0)} MJ/㎡`
             *   👉 **當日推估基準 ET0: {s_bq_et0:.2f} mm/day**
             """)
     else:
@@ -318,7 +333,6 @@ with tab3:
     st.header("🔮 樹林區未來 7 天官方天氣與降雨預報")
     
     if cwa_future:
-        # 圖標對應轉換字典
         def get_weather_icon(wx_text):
             if "雷" in wx_text: return "⛈️"
             elif "雨" in wx_text: return "🌧️"
@@ -328,7 +342,6 @@ with tab3:
             
         st.markdown("### 📡 氣象署官方動態天氣因子圖表")
         
-        # 建立美觀的圖卡排版
         cols = st.columns(7)
         for idx, day in enumerate(cwa_future):
             with cols[idx]:
@@ -358,8 +371,8 @@ with tab4:
     
     col_p1, col_p2 = st.columns(2)
     with col_p1:
-        st.session_state.z = st.number_input("📍 樹林分場海拔高度 (m)", value=40.0, disabled=True)
-        st.session_state.latitude = st.number_input("📐 樹林分場北緯緯度 (度)", value=24.9445, format="%.4f", disabled=True)
+        st.number_input("📍 樹林分場海拔高度 (m)", value=40.0, disabled=True)
+        st.number_input("📐 樹林分場北緯緯度 (度)", value=24.9445, format="%.4f", disabled=True)
     with col_p2:
         st.number_input("🏢 板橋主站(466881)海拔高度 (m)", value=24.5, disabled=True)
         st.number_input("📐 板橋主站(466881)北緯緯度 (度)", value=24.9592, format="%.4f", disabled=True)
