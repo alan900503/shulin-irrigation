@@ -86,12 +86,11 @@ def calculate_et0(t_max, t_min, t_dew, u_z, r_s, z, latitude, day_of_year, z_win
     return max(0.0, num / den)
 
 # ==========================================
-# 3. 實體智慧數據對接調度核心 (純函數快取)
+# 3. 實體智慧數據對接調度核心
 # ==========================================
 
 @st.cache_data(ttl=600)
 def fetch_completely_automated_data():
-    """唯讀快取：只抓取不污染狀態"""
     today_data, api_past_dict, future_list = None, {}, []
     
     # A. 抓取樹林無人站 (72AI40) 當日即時
@@ -130,7 +129,7 @@ def fetch_completely_automated_data():
     except:
         pass
 
-    # C. 未來 7 天預報 (F-D0047-069)
+    # C. 抓取新北市樹林區未來 7 天預報
     try:
         url_fore = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-069?Authorization={CWA_API_KEY}"
         res_fore = requests.get(url_fore, timeout=8, verify=False).json()
@@ -178,7 +177,7 @@ if cwa_past_api:
             st.session_state.weather_db[d_str] = {"sl_pres": 1008.0, "sl_tx": 31.0, "sl_tn": 24.0, "sl_ws": 1.2, "sl_precp": 0.0, "sl_rs": 20.0, "sl_td": 22.0}
         st.session_state.weather_db[d_str].update(bq_node)
 
-# 💡 安全防禦機制：全面改用 .get() 讀取狀態，徹底杜絕 AttributeError
+# 安全讀取本機環境配置變數
 z_val = st.session_state.get('z', 40.0)
 lat_val = st.session_state.get('latitude', 24.9445)
 root_depth_val = st.session_state.get('root_depth', 300)
@@ -212,7 +211,6 @@ with tab1:
     u_z = cwa_now["u_z"] if cwa_now else 1.5
 
     current_vwc = calculate_vwc(h_input)
-    # 💡 這裡已全面修復，改用安全防禦變數 z_val 與 lat_val 計算
     et0 = calculate_et0(t_max, t_min, t_dew, u_z, r_s_input, z_val, lat_val, current_doy)
     etc = et0 * kc_val
     
@@ -234,7 +232,7 @@ with tab1:
         st.warning(f"🟢 **【系統狀態：狀態良好】** 目前水分張力為 {h_input} kPa (維持在適宜區間 15 ~ 25 kPa)。")
 
 # ------------------------------------------
-# 分頁二：歷史氣象與 ET0 對照
+# 分頁二：歷史氣象與 ET0 對照 (✨ 完美實作左右水平並排方格)
 # ------------------------------------------
 with tab2:
     st.header("📅 雙站氣象歷史記憶資料庫")
@@ -264,31 +262,35 @@ with tab2:
 
     st.markdown("---")
     
-    st.subheader("📋 近 7 日雙站觀測與各自 ET0 預估報表")
+    # 🌟 2-1. 近 7 日大表：依據需求切換為水平並排的左右兩個各自獨立方格
+    st.subheader("📋 近 7 日雙站觀測與各自 ET0 預估獨立報表")
     sorted_dates = sorted(list(st.session_state.weather_db.keys()))[-7:]
     
-    display_rows = []
+    sl_rows, bq_rows = [], []
     for d in sorted_dates:
         node = st.session_state.weather_db[d]
         d_dt = datetime.strptime(d, "%Y-%m-%d")
         doy = d_dt.timetuple().tm_yday
         
+        # 個別帶入公式算出對應當日 ET0
         sl_et0 = calculate_et0(node.get("sl_tx",31.0), node.get("sl_tn",24.0), node.get("sl_td",22.0), node.get("sl_ws",1.0), node.get("sl_rs",20.0), 40.0, 24.9445, doy)
         bq_et0 = calculate_et0(node.get("bq_tx",31.0), node.get("bq_tn",24.0), node.get("bq_td",22.0), node.get("bq_ws",1.0), node.get("bq_rs",20.0), 24.5, 24.9592, doy)
         
-        display_rows.append({
-            "日期": d,
-            "樹林降雨(mm)": node.get("sl_precp", 0.0),
-            "樹林風速(m/s)": node.get("sl_ws", 1.0),
-            "樹林預估ET0": round(sl_et0, 2),
-            "板橋(466881)降雨": node.get("bq_precp", 0.0),
-            "板橋風速": node.get("bq_ws", 1.0),
-            "板橋預估ET0": round(bq_et0, 2)
-        })
-    st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+        sl_rows.append({"日期": d, "降雨(mm)": node.get("sl_precp", 0.0), "風速(m/s)": node.get("sl_ws", 1.0), "預估耗水(ET0)": round(sl_et0, 2)})
+        bq_rows.append({"日期": d, "降雨(mm)": node.get("bq_precp", 0.0), "風速(m/s)": node.get("bq_ws", 1.0), "預估耗水(ET0)": round(bq_et0, 2)})
+
+    # 在同一個水平線上建立兩個方格
+    grid_col1, grid_col2 = st.columns(2)
+    with grid_col1:
+        st.markdown("<div style='background-color:#1E293B; padding:10px; border-radius:8px; border-left:5px solid #2E7D32;'>🏡 <b>樹林分場 (手動上傳流水帳) 近七日報表</b></div>", unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame(sl_rows), use_container_width=True, hide_index=True)
+    with grid_col2:
+        st.markdown("<div style='background-color:#1E293B; padding:10px; border-radius:8px; border-left:5px solid #0284C7;'>🏢 <b>板橋主站 (站號 466881) 近七日報表</b></div>", unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame(bq_rows), use_container_width=True, hide_index=True)
 
     st.markdown("---")
     
+    # 🌟 2-2. 歷史單日回溯 Lookup：同樣在水平線上切分為左右對稱方格
     st.subheader("🔍 歷史日期任意觀測回溯 lookup")
     search_date = st.date_input("📅 請選擇欲回溯查詢的歷史日期", value=datetime.strptime(sorted_dates[-1], "%Y-%m-%d"))
     search_str = search_date.strftime("%Y-%m-%d")
@@ -299,11 +301,13 @@ with tab2:
         s_sl_et0 = calculate_et0(s_node.get("sl_tx",31.0), s_node.get("sl_tn",24.0), s_node.get("sl_td",22.0), s_node.get("sl_ws",1.0), s_node.get("sl_rs",20.0), 40.0, 24.9445, s_doy)
         s_bq_et0 = calculate_et0(s_node.get("bq_tx",31.0), s_node.get("bq_tn",24.0), s_node.get("bq_td",22.0), s_node.get("bq_ws",1.0), s_node.get("bq_rs",20.0), 24.5, 24.9592, s_doy)
         
-        st.markdown(f"#### 📊 {search_str} 當日物理因子對照清單")
+        st.markdown(f"#### 📊 {search_str} 當日實測物理因子與各自 ET0 對照")
+        
+        # 水平對稱查詢方格
         lookup_col1, lookup_col2 = st.columns(2)
         with lookup_col1:
             st.info(f"""
-            **🏡 樹林分場 (手動站)**
+            **🏡 樹林分場 (手動現地站)**
             *   測站氣壓: `{s_node.get('sl_pres', 1008.0)} hPa`
             *   最高 / 最低溫: `{s_node.get('sl_tx', 31.0)}°C / {s_node.get('sl_tn', 24.0)}°C`
             *   實測風速 / 降雨: `{s_node.get('sl_ws', 1.0)} m/s / {s_node.get('sl_precp', 0.0)} mm`
@@ -312,7 +316,7 @@ with tab2:
             """)
         with lookup_col2:
             st.warning(f"""
-            **🏢 板橋大站 (站號: 466881)**
+            **🏢 板橋主站 (站號: 466881)**
             *   測站氣壓: `{s_node.get('bq_pres', 1008.0)} hPa`
             *   最高 / 最低溫: `{s_node.get('bq_tx', 31.0)}°C / {s_node.get('bq_tn', 24.0)}°C`
             *   實測風速 / 降雨: `{s_node.get('bq_ws', 1.0)} m/s / {s_node.get('bq_precp', 0.0)} mm`
